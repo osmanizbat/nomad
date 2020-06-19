@@ -60,29 +60,26 @@ func connectJobID() string {
 	return jobID
 }
 
-// TestConnectDemo tests the demo job file from the Consul Connect Technology
-// Preview.
-//
-// https://github.com/hashicorp/nomad/blob/v0.9.5/website/source/guides/integrations/consul-connect/index.html.md#run-the-connect-enabled-services
-//
+// TestConnectDemo tests the demo job file used in Connect Integration examples.
 func (tc *ConnectE2ETest) TestConnectDemo(f *framework.F) {
 	t := f.T()
 
 	jobID := connectJobID()
 	tc.jobIds = append(tc.jobIds, jobID)
 
-	allocs := e2eutil.RegisterAndWaitForAllocs(t, tc.Nomad(), "connect/input/demo.nomad", jobID, "")
+	allocs := e2eutil.RegisterAndWaitForAllocs(t, tc.Nomad(), demoConnectJob, jobID, "")
 	allocIDs := e2eutil.AllocIDsFromAllocationListStubs(allocs)
 	e2eutil.CheckServicesPassing(t, tc.Consul().Agent(), allocIDs)
 }
 
+// TestConnectNativeDemo tests the demo job file used in Connect Native Integration examples.
 func (tc *ConnectE2ETest) TestConnectNativeDemo(f *framework.F) {
 	t := f.T()
 
 	jobID := connectJobID()
 	tc.jobIds = append(tc.jobIds, jobID)
 
-	allocs := e2eutil.RegisterAndWaitForAllocs(t, tc.Nomad(), "connect/input/native-demo.nomad", jobID, "")
+	allocs := e2eutil.RegisterAndWaitForAllocs(t, tc.Nomad(), demoConnectNativeJob, jobID, "")
 	allocIDs := e2eutil.AllocIDsFromAllocationListStubs(allocs)
 	e2eutil.CheckServicesPassing(t, tc.Consul().Agent(), allocIDs)
 }
