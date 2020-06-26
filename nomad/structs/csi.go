@@ -680,6 +680,16 @@ type CSIVolumeGetResponse struct {
 	QueryMeta
 }
 
+type CSIVolumeUnpublishRequest struct {
+	VolumeID string // Nomad volume ID, not external ID
+	NodeID   string // Nomad node ID, not external ID
+	WriteRequest
+}
+
+type CSIVolumeUnpublishResponse struct {
+	QueryMeta
+}
+
 // CSIPlugin collects fingerprint info context for the plugin for clients
 type CSIPlugin struct {
 	ID                 string

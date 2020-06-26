@@ -309,6 +309,9 @@ func (vw *volumeWatcher) nodeDetach(vol *structs.CSIVolume, claim *structs.CSIVo
 	err := vw.rpc.NodeDetachVolume(nReq,
 		&cstructs.ClientCSINodeDetachVolumeResponse{})
 	if err != nil {
+		// TODO(tgross): we need to be smarter here about what to do if the
+		// node is no longer reachable because it's gone. we don't want to
+		// just spin forever if the node won't ever come back
 		return fmt.Errorf("could not detach from node: %v", err)
 	}
 	claim.State = structs.CSIVolumeClaimStateNodeDetached
@@ -356,6 +359,9 @@ func (vw *volumeWatcher) controllerDetach(vol *structs.CSIVolume, claim *structs
 	err = vw.rpc.ControllerDetachVolume(cReq,
 		&cstructs.ClientCSIControllerDetachVolumeResponse{})
 	if err != nil {
+		// TODO(tgross): we could be smarter here about what to do if the
+		// controller isn't reachable because it's being redeployed (ex. a
+		// node drain). we don't want to just spin forever waiting for it.
 		return fmt.Errorf("could not detach from controller: %v", err)
 	}
 	claim.State = structs.CSIVolumeClaimStateReadyToFree

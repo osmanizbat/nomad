@@ -1,6 +1,7 @@
 package nomad
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -342,6 +343,140 @@ func (v *CSIVolume) Deregister(args *structs.CSIVolumeDeregisterRequest, reply *
 	reply.Index = index
 	v.srv.setQueryMeta(&reply.QueryMeta)
 	return nil
+}
+
+// Unpublish forces a volume to be unpublished from its nodes and controllers
+func (v *CSIVolume) Unpublish(args *structs.CSIVolumeUnpublishRequest, reply *structs.CSIVolumeUnpublishResponse) error {
+	if done, err := v.srv.forward("CSIVolume.Unpublish", args, args, reply); done {
+		return err
+	}
+
+	allowVolume := acl.NamespaceValidator(acl.NamespaceCapabilityCSIWriteVolume)
+	aclObj, err := v.srv.WriteACLObj(&args.WriteRequest, false)
+	if err != nil {
+		return err
+	}
+
+	metricsStart := time.Now()
+	defer metrics.MeasureSince([]string{"nomad", "volume", "unpublish"}, metricsStart)
+
+	ns := args.RequestNamespace()
+	if !allowVolume(aclObj, ns) {
+		return structs.ErrPermissionDenied
+	}
+
+	nodeID := args.NodeID
+	volID := args.VolumeID
+
+	if volID == "" {
+		return fmt.Errorf("missing volume ID")
+	}
+	if nodeID == "" {
+		return fmt.Errorf("missing node ID")
+	}
+
+	vol, err := state.CSIVolumeByID(ws, ns, args.ID)
+	if err != nil {
+		return err
+	}
+	if vol != nil {
+		vol, err = state.CSIVolumeDenormalize(ws, vol)
+	}
+	if err != nil {
+		return err
+	}
+
+	nodeDetach := func(claim *structs.CSIVolumeClaim, alloc *structs.Allocation) error {
+		if alloc != nil && alloc.NodeID == nodeID {
+			nReq := &cstructs.ClientCSINodeDetachVolumeRequest{
+				PluginID:       vol.PluginID,
+				VolumeID:       volID,
+				ExternalID:     vol.RemoteID(),
+				AllocID:        alloc.ID,
+				NodeID:         nodeID,
+				AttachmentMode: vol.AttachmentMode,
+				AccessMode:     vol.AccessMode,
+				ReadOnly:       claim.Mode == structs.CSIVolumeClaimRead,
+			}
+			err := v.srv.NodeDetachVolume(nReq,
+				&cstructs.ClientCSINodeDetachVolumeResponse{})
+			if err != nil {
+				// we should only get this error if the Nomad node disconnects and
+				// is garbage-collected, so at this point we don't have any reason
+				// to operate as though the volume is attached to it.
+				if errors.Is(err, fmt.Errorf("Unknown node: %s", nodeID)) {
+					return nil
+				}
+				if errors.Is(err, "could not get node plugin") {
+					return fmt.Errorf("could not detach from node: %w", err)
+				}
+
+				// TODO(tgross): we need to be smarter here about what to do if the
+				// node is no longer reachable because it's gone. we don't want to
+				// just spin forever if the node won't ever come back
+				return fmt.Errorf("could not detach from node: %w", err)
+			}
+		}
+	}
+
+	// make the client NodePublish / NodeUnstage RPCs, which must be completed
+	// before controller operations or releasing the claim.
+	for _, claim := range vol.ReadClaims {
+		alloc := vol.ReadAllocs[claim.AllocationID]
+		err := nodeDetach(claim, alloc)
+	}
+	for _, claim := range vol.WriteClaims {
+		alloc := vol.WriteAllocs[claim.AllocationID]
+		err := nodeDetach(claim, alloc)
+	}
+
+	// controllerDetach makes the client RPC to the controller to
+	// unpublish the volume if a controller is required and no other
+	// allocs on the node need it
+	controllerDetach := func(vol *structs.CSIVolume, claim *structs.CSIVolumeClaim, nodeClaims map[string]int) error {
+		if !vol.ControllerRequired || nodeClaims[claim.NodeID] > 1 {
+			claim.State = structs.CSIVolumeClaimStateReadyToFree
+			return nil
+		}
+		vw.logger.Trace("detaching controller")
+		// note: we need to get the CSI Node ID, which is not the same as
+		// the Nomad Node ID
+		ws := memdb.NewWatchSet()
+		targetNode, err := vw.state.NodeByID(ws, claim.NodeID)
+		if err != nil {
+			return err
+		}
+		if targetNode == nil {
+			return fmt.Errorf("%s: %s", structs.ErrUnknownNodePrefix, claim.NodeID)
+		}
+		targetCSIInfo, ok := targetNode.CSINodePlugins[vol.PluginID]
+		if !ok {
+			return fmt.Errorf("failed to find NodeInfo for node: %s", targetNode.ID)
+		}
+
+		plug, err := vw.state.CSIPluginByID(ws, vol.PluginID)
+		if err != nil {
+			return fmt.Errorf("plugin lookup error: %s %v", vol.PluginID, err)
+		}
+		if plug == nil {
+			return fmt.Errorf("plugin lookup error: %s missing plugin", vol.PluginID)
+		}
+
+		cReq := &cstructs.ClientCSIControllerDetachVolumeRequest{
+			VolumeID:        vol.RemoteID(),
+			ClientCSINodeID: targetCSIInfo.NodeInfo.ID,
+			Secrets:         vol.Secrets,
+		}
+		cReq.PluginID = plug.ID
+		err = vw.rpc.ControllerDetachVolume(cReq,
+			&cstructs.ClientCSIControllerDetachVolumeResponse{})
+		if err != nil {
+			return fmt.Errorf("could not detach from controller: %v", err)
+		}
+		claim.State = structs.CSIVolumeClaimStateReadyToFree
+		return nil
+	}
+
 }
 
 // Claim submits a change to a volume claim

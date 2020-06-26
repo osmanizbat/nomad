@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	metrics "github.com/armon/go-metrics"
@@ -181,7 +182,7 @@ func (c *CSI) NodeDetachVolume(req *structs.ClientCSINodeDetachVolumeRequest, re
 
 	mounter, err := c.c.csimanager.MounterForPlugin(ctx, req.PluginID)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not get node plugin: %w", err)
 	}
 
 	usageOpts := &csimanager.UsageOptions{
