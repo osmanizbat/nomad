@@ -1,6 +1,6 @@
 import { currentURL } from '@ember/test-helpers';
 import { run } from '@ember/runloop';
-import { module, test } from 'qunit';
+import { module, skip, test } from 'qunit';
 import { setupApplicationTest } from 'ember-qunit';
 import { setupMirage } from 'ember-cli-mirage/test-support';
 import ServerMonitor from 'nomad-ui/tests/pages/servers/monitor';
@@ -34,7 +34,7 @@ module('Acceptance | server monitor', function(hooks) {
     assert.equal(currentURL(), '/servers');
   });
 
-  test('the monitor page immediately streams agent monitor output at the info level', async function(assert) {
+  skip('the monitor page immediately streams agent monitor output at the info level', async function(assert) {
     await ServerMonitor.visit({ name: agent.name });
 
     const logRequest = server.pretender.handledRequests.find(req =>
